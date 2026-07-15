@@ -1,0 +1,16 @@
+# === Fichiers de dev de l'appli navigateur (migration en cours, non publiée) ===
+app.html
+engine.js
+xlsx.full.min.js
+
+# === Config & données métier : contiennent des NOMS / ventes réelles (RGPD) ===
+vendeurs.json
+_config.json
+_cumul.json
+_test.html
+_test.xlsx
+_out.txt
+.derniere_generation
+
+# Sauvegardes de cumul téléchargées depuis l'appli
+audexia_cumul_*.json
