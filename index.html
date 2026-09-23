@@ -337,7 +337,7 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(ajuster);
     var d=DETAILS_STOCK[k];if(!d){return;}
     var head='<div class="dl sdl dhead"><span></span><span>MODÈLE</span><span>JOURS STOCK</span><span>PRIX</span><span>KM</span></div>';
     var body=d.lignes.length?d.lignes.map(function(l){
-      return '<div class="dl sdl"><span class="dtag t-'+E(k.slice(2))+'">'+E(k.slice(2))+'</span><span class="dveh">'+E(l.mod)+'</span><span><b style="color:#e24b4a;font-family:'Doto',monospace">'+l.jours+'</b> j</span><span>'+E(l.prix)+'</span><span>'+E(l.km)+'</span></div>';
+      return '<div class="dl sdl"><span class="dtag t-'+E(k.slice(2))+'">'+E(k.slice(2))+'</span><span class="dveh">'+E(l.mod)+'</span><span><b class="doto" style="color:#e24b4a">'+l.jours+'</b> j</span><span>'+E(l.prix)+'</span><span>'+E(l.km)+'</span></div>';
     }).join(''):'<div style="color:#8a8568;font-size:1.5vw;padding:2vw 0">Aucun véhicule de plus de 180 jours 🎉</div>';
     detail.innerHTML='<div class="dh"><span class="who">'+E(d.nom)+'</span><span class="dsum">'+d.lignes.length+' véhicules · à cibler pour le déstockage</span></div>'+head+'<div class="dbody">'+body+'</div><div class="dfoot">Échap : retour au classement</div>';
     detail.classList.remove('mq');detail.classList.add('on');
