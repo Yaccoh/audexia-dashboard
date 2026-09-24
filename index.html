@@ -136,7 +136,8 @@ body.has-vofi .thead,body.has-vofi .row{grid-template-columns:4.4vw 2.4vw minmax
 #detail.mq .dl{grid-template-columns:3.4vw minmax(0,1.3fr) minmax(0,1.8fr) minmax(0,1.5fr) 4.5vw 7vw minmax(0,1.9fr) minmax(0,2.2fr) 6vw}
 #detail .dl>span{color:#d2ccb4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #detail .dhead{color:#8a8568;font-size:1.05vw;letter-spacing:.12vw;border-bottom:1px solid #2e2c20}
-#detail .dbody{flex:1;overflow:hidden;display:flex;flex-direction:column;justify-content:space-evenly}
+#detail .dbody{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;justify-content:flex-start;gap:.15vw;scrollbar-width:thin;scrollbar-color:#c8920a #1a1710}
+#detail .dbody::-webkit-scrollbar{width:.7vw}#detail .dbody::-webkit-scrollbar-thumb{background:#c8920a}
 #detail .dtag{font-family:'Doto',monospace;font-weight:900;font-size:1vw;text-align:center}
 #detail .t-VN{color:#33e860}#detail .t-VD{color:#f0934a}#detail .t-VO{color:#36c5f0}
 #detail .sdl{grid-template-columns:3.4vw minmax(0,3fr) 8vw minmax(0,1.5fr) minmax(0,1.5fr)}
@@ -151,7 +152,8 @@ body.has-vofi .thead,body.has-vofi .row{grid-template-columns:4.4vw 2.4vw minmax
 #annuel .dh{display:flex;justify-content:space-between;align-items:baseline;border-bottom:.22vw solid #c8920a;padding-bottom:.5vw}
 #annuel .who{color:#f0b429;font-size:2.3vw;letter-spacing:.25vw;text-shadow:0 0 .5vw rgba(240,180,41,.55)}
 #annuel .dsum{color:#8a8568;font-size:1.3vw}
-#annuel .abody{flex:1;overflow:hidden;display:flex;flex-direction:column;justify-content:space-evenly;margin-top:.3vw}
+#annuel .abody{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;justify-content:flex-start;gap:.1vw;margin-top:.3vw;scrollbar-width:thin;scrollbar-color:#c8920a #1a1710}
+#annuel .abody::-webkit-scrollbar{width:.7vw}#annuel .abody::-webkit-scrollbar-thumb{background:#c8920a}
 #annuel .ar{display:grid;gap:.5vw;align-items:center;font-size:1.3vw;padding:.1em 0;border-bottom:1px solid #34301f}
 #annuel .ahead{color:#8a8568;font-size:1vw;letter-spacing:.1vw;border-bottom:1px solid #2e2c20}
 #annuel .arank{color:#f0b429;font-family:'Doto',monospace;font-weight:900;text-align:center}
@@ -320,7 +322,7 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(ajuster);
         +'<span class="avn">'+(l.vn||'·')+'</span><span class="avd">'+(l.vd||'·')+'</span><span class="avo">'+(l.vo||'·')+'</span><span class="avofi">'+(l.vofi||'·')+'</span><span class="arep">'+(l.reppct?l.reppct+'%':'·')+'</span><span class="atot">'+l.tot+'</span></div>';
     }).join('');
     annuel.innerHTML='<div class="dh"><span class="who">🏆 CLASSEMENT ANNUEL '+E(a.annee)+'</span><span class="dsum">'+a.lignes.length+' vendeurs · ventes/mois · ◯ = objectif du mois atteint</span></div>'
-      +'<div class="abody">'+head+body+'</div><div class="afoot">Échap : retour au classement</div>';
+      +'<div class="abody">'+head+body+'</div><div class="afoot">↑↓ défiler · Échap : retour</div>';
     annuel.classList.add('on');
   }
   function openFiche(k){
@@ -333,7 +335,7 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(ajuster);
     var n={VN:0,VD:0,VO:0};d.lignes.forEach(function(l){n[l.type]++;});
     var head='<div class="dl dhead"><span></span>'+(mq?'<span>VENDEUR</span>':'')+'<span>CLIENT</span><span>VÉHICULE</span><span>STOCK</span><span>ÉTAT</span><span>FINANCEMENT</span><span>REPRISE</span><span>COMMANDE</span></div>';
     var body=d.lignes.map(function(l){return '<div class="dl"><span class="dtag t-'+l.type+'">'+l.type+'</span>'+(mq?'<span class="dcli">'+E(l.vendeur)+'</span>':'')+'<span class="dcli">'+E(l.client)+'</span><span class="dveh">'+E(l.veh)+'</span><span>'+E(l.stock)+'</span><span>'+E(l.etat)+'</span><span>'+E(l.fin)+'</span><span>'+E(l.rep)+'</span><span>'+E(l.cmd)+'</span></div>';}).join('');
-    detail.innerHTML='<div class="dh"><span class="who">'+E(d.nom)+'</span><span class="dsum">'+d.lignes.length+' ventes · '+n.VN+' VN · '+n.VD+' VD · '+n.VO+' VO</span></div>'+head+'<div class="dbody">'+body+'</div><div class="dfoot">Échap : retour au classement</div>';
+    detail.innerHTML='<div class="dh"><span class="who">'+E(d.nom)+'</span><span class="dsum">'+d.lignes.length+' ventes · '+n.VN+' VN · '+n.VD+' VD · '+n.VO+' VO</span></div>'+head+'<div class="dbody">'+body+'</div><div class="dfoot">↑↓ défiler · Échap : retour</div>';
     detail.classList.toggle('mq',mq);detail.classList.add('on');
   }
   function openStock(k){
@@ -342,17 +344,29 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(ajuster);
     var body=d.lignes.length?d.lignes.map(function(l){
       return '<div class="dl sdl"><span class="dtag t-'+E(k.slice(2))+'">'+E(k.slice(2))+'</span><span class="dveh">'+E(l.mod)+'</span><span><b class="doto" style="color:#e24b4a">'+l.jours+'</b> j</span><span>'+E(l.prix)+'</span><span>'+E(l.km)+'</span></div>';
     }).join(''):'<div style="color:#8a8568;font-size:1.5vw;padding:2vw 0">Aucun véhicule de plus de 180 jours 🎉</div>';
-    detail.innerHTML='<div class="dh"><span class="who">'+E(d.nom)+'</span><span class="dsum">'+d.lignes.length+' véhicules · à cibler pour le déstockage</span></div>'+head+'<div class="dbody">'+body+'</div><div class="dfoot">Échap : retour au classement</div>';
+    detail.innerHTML='<div class="dh"><span class="who">'+E(d.nom)+'</span><span class="dsum">'+d.lignes.length+' véhicules · à cibler pour le déstockage</span></div>'+head+'<div class="dbody">'+body+'</div><div class="dfoot">↑↓ défiler · Échap : retour</div>';
     detail.classList.remove('mq');detail.classList.add('on');
+  }
+  function scrollPop(el,e){
+    if(!el)return;
+    var h=el.clientHeight;
+    if(e.key==='ArrowDown'){el.scrollTop+=h*0.22;e.preventDefault();}
+    else if(e.key==='ArrowUp'){el.scrollTop-=h*0.22;e.preventDefault();}
+    else if(e.key==='PageDown'||e.key===' '){el.scrollTop+=h*0.85;e.preventDefault();}
+    else if(e.key==='PageUp'){el.scrollTop-=h*0.85;e.preventDefault();}
+    else if(e.key==='Home'){el.scrollTop=0;e.preventDefault();}
+    else if(e.key==='End'){el.scrollTop=el.scrollHeight;e.preventDefault();}
   }
   document.addEventListener('keydown',function(e){
     lastNav=Date.now();
     if(detail&&detail.classList.contains('on')){
       if(e.key==='Escape'||e.key==='Backspace'||e.key==='Enter'){detail.classList.remove('on');e.preventDefault();}
+      else{scrollPop(detail.querySelector('.dbody'),e);}
       return;
     }
     if(annuel&&annuel.classList.contains('on')){
       if(e.key==='Escape'||e.key==='Backspace'||e.key==='Enter'){annuel.classList.remove('on');e.preventDefault();}
+      else{scrollPop(annuel.querySelector('.abody'),e);}
       return;
     }
     if(e.key==='a'||e.key==='A'){openAnnuel();e.preventDefault();return;}
