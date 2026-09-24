@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Doto:wght@600;900&family=VT323&display=swap">
 <style>
 html,body{margin:0;padding:0;background:#070705;height:100%;overflow:hidden;cursor:none}
-body{font-family:'VT323',monospace;display:flex;flex-direction:column;padding:.7vw 2vw;box-sizing:border-box}
+body{font-family:'VT323',monospace;display:flex;flex-direction:column;padding:.7vw 2vw;box-sizing:border-box;filter:contrast(1.13) saturate(1.4) brightness(1.06)}
 .doto{font-family:'Doto',monospace;font-weight:900}
 .head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:.22vw solid #c8920a;padding-bottom:.6vw}
 .head{border-bottom:.22vw solid #c8920a;box-shadow:0 .15vw .6vw -.1vw rgba(200,146,10,.5)}
@@ -76,8 +76,11 @@ body{font-family:'VT323',monospace;display:flex;flex-direction:column;padding:.7
 .trophy-ok{color:#f0b429;animation:pulseGreen 1s ease-in-out infinite}
 .trophy-or{color:#f0b429;filter:drop-shadow(0 0 .12vw #f0b429)}
 .clock{color:#8a8568;letter-spacing:.1vw}
-.crt{position:fixed;inset:0;pointer-events:none;z-index:9;background:repeating-linear-gradient(0deg,rgba(0,0,0,.07) 0,rgba(0,0,0,.07) 1px,transparent 2px,transparent 4px)}
-.crt::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 75%,rgba(0,0,0,.20) 100%)}
+.crt{position:fixed;inset:0;pointer-events:none;z-index:9;background:repeating-linear-gradient(0deg,rgba(0,0,0,.13) 0,rgba(0,0,0,.13) 1px,transparent 2px,transparent 3px),repeating-linear-gradient(90deg,rgba(255,0,60,.05) 0,transparent 2px,rgba(0,180,255,.05) 3px,transparent 5px);animation:vhsflick .18s steps(2) infinite}
+.crt::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 68%,rgba(0,0,0,.30) 100%)}
+.crt::before{content:"";position:absolute;left:0;right:0;height:14vh;background:linear-gradient(rgba(255,255,255,0),rgba(255,255,255,.045),rgba(255,255,255,0));animation:vhsroll 7s linear infinite}
+@keyframes vhsflick{0%{opacity:1}50%{opacity:.93}100%{opacity:1}}
+@keyframes vhsroll{0%{top:-15vh}100%{top:100vh}}
 :root{--r:1.85vw}
 .thead,.row{display:grid;grid-template-columns:4.4vw 2.4vw minmax(0,1fr) 4vw 4vw 4vw 5.4vw 6vw 13.5vw;gap:.6vw;align-items:center}
 body.has-vofi .thead,body.has-vofi .row{grid-template-columns:4.4vw 2.4vw minmax(0,1fr) 4vw 4vw 4vw 4.4vw 5.4vw 6vw 13.5vw}
