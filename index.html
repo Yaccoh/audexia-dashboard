@@ -5,7 +5,7 @@
 <meta name="referrer" content="no-referrer">
 <title>Tableau de bord</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Doto:wght@600;900&family=VT323&display=swap">
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 html,body{margin:0;padding:0;background:#070705;height:100%;overflow:hidden;cursor:none}
 body{font-family:'VT323',monospace;display:flex;flex-direction:column;padding:.7vw 2vw;box-sizing:border-box;filter:contrast(1.13) saturate(1.4) brightness(1.06)}
@@ -184,7 +184,7 @@ body.has-vofi .thead,body.has-vofi .row{grid-template-columns:4.4vw 2.4vw minmax
 <div id="detail"></div>
 <div id="annuel"></div>
 <div class="head"><div class="t doto">CLASSEMENT AUDEXIA</div>
-<div class="m"><span id="hmois">OCTOBRE 2026</span> — MAJ <span id="hmaj">12/10 08:11</span> &nbsp;<span class="clock doto" id="clock">--:--:--</span> <span id="blink">▮</span> <span id="stale" class="stale"></span> <span id="trophy" title="Classement annuel 2026">🏆</span></div></div>
+<div class="m"><span id="hmois">OCTOBRE 2026</span> — MAJ <span id="hmaj">12/10 08:11</span> &nbsp;<span class="clock doto" id="clock">--:--:--</span> <span id="blink">▮</span> <span id="stale" class="stale"></span> <span id="impbtn" title="Importer un export OpenFlex (.xlsx)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></span><input type="file" id="impfile" accept=".xlsx,.xls" style="display:none"> <span id="trophy" title="Classement annuel 2026">🏆</span></div></div>
 <div class="cards">
 <div class="card"><div class="lab">TOTAL COMMANDES</div><div class="totline" id="cTotline"><span class="val doto cnt" id="cTotal" data-v="32" style="color:#f0b429">0</span></div></div>
 <div class="card"><div class="lab">VN + DEMO</div>
@@ -415,4 +415,524 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(ajuster);
     if(Date.now()-lastNav>90000&&!(detail&&detail.classList.contains('on')))location.reload();
   },120000);
 })();
+</script><script>
+/* Cœur de calcul du classement — PORTAGE JS fidèle de generer_dashboard.py.
+   Doit rester synchronisé avec la logique Python. Pur (pas de DOM). */
+(function(root){
+"use strict";
+var MARQUES=["VW","VW VU","AUDI","SKODA","CUPRA","SEAT"];
+var STATUTS_OK={"Commandée":1,"Livré":1,"À livrer":1};
+function up(s){return String(s==null?"":s).toUpperCase();}
+function strip(s){return String(s==null?"":s).trim();}
+// Anonymisation (version publique) : initiale prénom + NOM. Idempotent sur une forme déjà anonymisée.
+function anonName(nom){
+  var p=String(nom==null?"":nom).split(/\s+/).filter(Boolean);
+  if(!p.length)return String(nom==null?"":nom).toUpperCase();
+  if(p.length===1)return p[0].toUpperCase();
+  return p[0][0].toUpperCase()+". "+p[p.length-1].toUpperCase();
+}
+// Hash déterministe (FNV-1a 32 bits, hex) — pour masquer les clés client côté public.
+function fnv1a(s){var h=0x811c9dc5>>>0;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0;}return ("0000000"+h.toString(16)).slice(-8);}
+function marqueCourte(m){
+  m=up(m).trim();
+  if(m.indexOf("VOLKSWAGEN U")===0)return "VW VU";
+  if(m.indexOf("VOLKSWAGEN")===0)return "VW";
+  var ks=["AUDI","SKODA","CUPRA","SEAT"];
+  for(var i=0;i<ks.length;i++)if(m.indexOf(ks[i])===0)return ks[i];
+  return m||"?";
+}
+// Dates lues en CIVIL (indépendant du fuseau) : le numéro de série Excel est
+// converti en instant UTC de minuit civil, puis lu via getUTC*. Évite qu'une
+// date « 01/10 » bascule en septembre selon le fuseau du poste.
+function toCivil(cell){
+  if(cell==null||cell==="")return null;
+  if(cell instanceof Date){ // repli : on reconstruit un civil UTC depuis l'heure locale
+    return new Date(Date.UTC(cell.getFullYear(),cell.getMonth(),cell.getDate(),
+      cell.getHours(),cell.getMinutes(),cell.getSeconds()));
+  }
+  if(typeof cell==="number"&&isFinite(cell)){
+    var ms=Math.round((cell-25569)*86400*1000); // 25569 = 1970-01-01 en série Excel
+    var d=new Date(ms);return isNaN(d.getTime())?null:d;
+  }
+  var s=String(cell).trim(); // repli chaîne "jj/mm/aaaa [hh:mm]"
+  var m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if(m)return new Date(Date.UTC(+m[3],+m[2]-1,+m[1]));
+  var d2=new Date(s);return isNaN(d2.getTime())?null:
+    new Date(Date.UTC(d2.getFullYear(),d2.getMonth(),d2.getDate()));
+}
+function ym(d){ // "YYYY-MM" (civil UTC)
+  return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0");
+}
+function ymd(d){
+  return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0");
+}
+function isNum(x){return typeof x==="number"&&isFinite(x);}
+
+// aoa = array d'array (rows), rows[0]=entêtes. cfg = vendeurs.json. now = Date.
+// opts.firstMSeed = {"CLIENT|MODELE":"YYYY-MM"} mois d'origine VN/VD (depuis l'annuel)
+// pour appliquer fidèlement la règle "recommande" comme le Python.
+function compute(aoa,cfg,now,opts){
+  opts=opts||{};
+  now=now||new Date();
+  // "Maintenant" ramené en civil UTC pour comparer dans le même repère que les dates des cellules.
+  var nowC=new Date(Date.UTC(now.getFullYear(),now.getMonth(),now.getDate(),
+    now.getHours(),now.getMinutes(),now.getSeconds()));
+  var hdr=aoa[0].map(function(x){return x==null?"":String(x);});
+  function col(n){return hdr.indexOf(n);}
+  var req=["Opportunité suivie par","Marque","Modèle","Date de commande",
+           "Statut de l'offre","Date de création de l'offre","N° de la reprise"];
+  var c={};for(var i=0;i<req.length;i++){c[req[i]]=col(req[i]);}
+  var i_chassis=col("N° chassis");
+  var i_parc=col("Parc");if(i_parc<0)i_parc=col("Type de véhicule");
+  if(i_parc<0)throw new Error("ni 'Parc' ni 'Type de véhicule' dans l'export");
+  var ci_cmd=col("N° de la commande"),ci_off=col("N° de l'offre");
+  var ci_rs=col("Raison sociale client"),ci_nom=col("Nom client"),ci_pren=col("Prénom client");
+  var ci_mode_fin=col("Mode de financement");var a_fin=ci_mode_fin>=0;
+  var ci_typefin=col("Type du financement");
+  var ci_mqrep=col("Marque (reprise)"),ci_morep=col("Modèle (reprise)");
+  var ci_stock=col("Nombre de jours en stock"),ci_prixrep=col("Prix de reprise (TTC)");
+  var ci_opp=col("N° de l'opportunité"),ci_typecli=col("Type du client");
+
+  var obj_vn=cfg.objectifs.VN,obj_vo=cfg.objectifs.VO,obj_vu=(cfg.objectifs.VU!=null?cfg.objectifs.VU:5);
+  var obj_perso={};Object.keys(cfg.objectifs_perso||{}).forEach(function(k){obj_perso[up(k)]=parseInt(cfg.objectifs_perso[k],10);});
+  var vu_ok={};(cfg.vu_compte_pour||[]).forEach(function(n){vu_ok[up(n)]=1;});
+  var types={};Object.keys(cfg.vendeurs||{}).forEach(function(n){types[up(n)]=cfg.vendeurs[n];});
+  var exclusions={};(cfg.exclusions||[]).forEach(function(x){exclusions[String(x)]=1;});
+  var regles=cfg.exclusions_regles||[];
+  var reattr={};Object.keys(cfg.reattributions||{}).forEach(function(k){reattr[up(strip(k))]=cfg.reattributions[k];});
+  var masques={};(cfg.masquer_classement||[]).forEach(function(n){masques[up(n)]=1;});
+  var compterPart={};(cfg.compter_particuliers||[]).forEach(function(n){compterPart[up(n)]=1;});
+  var chefs={};(cfg.chefs_des_ventes||[]).forEach(function(n){chefs[up(n)]=1;});
+  function objectifDe(n){if(obj_perso[n]!=null)return obj_perso[n];var t=types[n];return t==="VU"?obj_vu:t==="VN"?obj_vn:obj_vo;}
+
+  var toutes=[];
+  for(var r=1;r<aoa.length;r++){
+    var row=aoa[r];if(!row)continue;
+    var vendeur=strip(row[c["Opportunité suivie par"]]);
+    if(i_chassis>=0&&Object.keys(reattr).length){
+      var ch=up(strip(row[i_chassis]));
+      if(reattr[ch])vendeur=reattr[ch];
+    }
+    if(opts.anon)vendeur=anonName(vendeur); // version publique : nom anonymisé dès la lecture
+    var parc=row[i_parc];
+    if(!vendeur||(parc!=="Neuf"&&parc!=="Occasion"&&parc!=="Démonstration"))continue;
+    if(!STATUTS_OK[row[c["Statut de l'offre"]]])continue;
+    var marque_c=marqueCourte(row[c["Marque"]]);
+    var modele_u=up(row[c["Modèle"]]);
+    var date_cmd=row[c["Date de commande"]];
+    var no_cmd=ci_cmd>=0?row[ci_cmd]:null;
+    var no_off=ci_off>=0?row[ci_off]:null;
+    var sale_id=String(no_cmd||no_off||(vendeur+"|"+marque_c+"|"+modele_u+"|"+date_cmd));
+    if(exclusions[sale_id])continue;
+    if(regles.length){
+      var ctxt=[ci_rs,ci_nom].filter(function(x){return x>=0&&row[x];}).map(function(x){return String(row[x]);}).join(" ").toUpperCase();
+      var exclu=false;
+      for(var g=0;g<regles.length;g++){
+        var vd=regles[g].vendeur||"",cc=regles[g].client_contient||"";
+        if(vd&&up(vendeur)!==up(vd))continue;
+        if(cc&&ctxt.indexOf(up(cc))>=0){exclu=true;break;}
+      }
+      if(exclu)continue;
+    }
+    var offStr=no_off!=null?String(no_off):"",cmdStr=no_cmd!=null?String(no_cmd):"";
+    var offnum=/^\d+$/.test(offStr)?parseInt(offStr,10):(/^\d+$/.test(cmdStr)?parseInt(cmdStr,10):0);
+    var clientNom=ci_nom>=0&&row[ci_nom]?strip(row[ci_nom]):"";
+    var clientPren=ci_pren>=0&&row[ci_pren]?strip(row[ci_pren]):"";
+    var clientRs=ci_rs>=0&&row[ci_rs]?strip(row[ci_rs]):"";
+    var clientFull=clientRs?clientRs:([clientNom,clientPren].filter(Boolean).join(" ")||"—");
+    // Client affiché : anonymisé en version publique (initiale société, ou prénom->initiale + NOM).
+    var clientDisp=clientFull;
+    if(opts.anon){
+      if(clientRs)clientDisp=clientRs.slice(0,1).toUpperCase()+".";
+      else if(clientNom)clientDisp=(clientPren?clientPren.slice(0,1).toUpperCase()+". ":"")+clientNom.toUpperCase();
+      else if(clientPren)clientDisp=clientPren.slice(0,1).toUpperCase()+".";
+      else clientDisp="—";
+    }
+    var reprise=!!row[c["N° de la reprise"]];
+    toutes.push({
+      vendeur:vendeur,type:(parc==="Occasion")?"VO":"VN",demo:(parc==="Démonstration"),
+      marque:marque_c,marque_brute:up(row[c["Marque"]]),modele:modele_u,
+      date:toCivil(date_cmd),
+      offre:toCivil(row[c["Date de création de l'offre"]]),
+      reprise:reprise,
+      finance:(a_fin&&row[ci_mode_fin]!=null&&row[ci_mode_fin]!==""&&row[ci_mode_fin]!=="Comptant"),
+      statut:row[c["Statut de l'offre"]],
+      client:clientDisp,clientFull:clientFull,client_nom:clientNom,client_pren:clientPren,client_rs:clientRs,
+      typefin:(ci_typefin>=0&&row[ci_typefin])?strip(row[ci_typefin]):"",
+      stock:(ci_stock>=0?row[ci_stock]:null),
+      prixrep:(ci_prixrep>=0?row[ci_prixrep]:null),
+      reprise_veh:(reprise?[ci_mqrep,ci_morep].filter(function(x){return x>=0&&row[x];}).map(function(x){return strip(row[x]);}).join(" "):""),
+      opp:(ci_opp>=0?row[ci_opp]:null),
+      particulier:(ci_typecli>=0&&row[ci_typecli]!=null&&strip(row[ci_typecli]).toLowerCase()==="particulier"),
+      offnum:offnum,id:sale_id
+    });
+  }
+
+  // Déduplication BC refaits
+  var grp={};
+  for(var k=0;k<toutes.length;k++){
+    var v=toutes[k];
+    var key=v.opp?("O|"+v.opp+"|"+v.modele):("__noopp__|"+k);
+    (grp[key]=grp[key]||[]).push(v);
+  }
+  var dedup=[];
+  Object.keys(grp).forEach(function(key){
+    var lst=grp[key];var offs={};lst.forEach(function(v){offs[v.offnum]=1;});
+    var keys=Object.keys(offs);
+    if(keys.length<=1){dedup=dedup.concat(lst);}
+    else{var mx=Math.max.apply(null,lst.map(function(v){return v.offnum;}));
+      dedup=dedup.concat(lst.filter(function(v){return v.offnum===mx;}));}
+  });
+  toutes=dedup.filter(function(v){return v.date;});
+
+  // Mois courant (fallback = mois le plus représenté)
+  var moisCourant=ym(nowC);
+  if(!toutes.some(function(v){return ym(v.date)===moisCourant;})&&toutes.length){
+    var cnt={};toutes.forEach(function(v){var m=ym(v.date);cnt[m]=(cnt[m]||0)+1;});
+    moisCourant=Object.keys(cnt).sort(function(a,b){return cnt[b]-cnt[a];})[0];
+  }
+  // Règle "recommande" VN (mois d'origine) — basée sur l'export seul (pas d'annuel en navigateur)
+  function ccm(v){var cli=strip(v.clientFull).toUpperCase();if(!cli||cli==="—")return null;var base=cli+"|"+v.modele;return opts.anon?fnv1a(base):base;}
+  var firstM={};
+  var seed=opts.firstMSeed||{}; // mois d'origine connus (annuel, mois passés)
+  Object.keys(seed).forEach(function(k){var m=seed[k];if(m&&(firstM[k]==null||m<firstM[k]))firstM[k]=m;});
+  toutes.forEach(function(v){if(v.type==="VN"){var kk=ccm(v);if(kk){var m=ym(v.date);if(firstM[kk]==null||m<firstM[kk])firstM[kk]=m;}}});
+  toutes=toutes.filter(function(v){
+    if(v.type!=="VN")return true;var kk=ccm(v);if(!kk||firstM[kk]==null)return true;
+    return ym(v.date)<=firstM[kk];
+  });
+  var ventes=toutes.filter(function(v){return ym(v.date)===moisCourant;});
+
+  function estMasque(v){var nom=up(v.vendeur);if(!masques[nom])return false;if(compterPart[nom]&&v.particulier)return false;return true;}
+  var ventes_c=ventes.filter(function(v){return !estMasque(v);});
+
+  var total_vn=ventes_c.filter(function(v){return v.type==="VN";}).length;
+  var total_vd=ventes_c.filter(function(v){return v.type==="VN"&&v.demo;}).length;
+  var total_vo=ventes_c.filter(function(v){return v.type==="VO";}).length;
+  var total_vo_marchand=ventes.filter(function(v){return v.type==="VO"&&estMasque(v);}).length;
+
+  var marques_vn={},marques_vd={},marques_vo={};
+  MARQUES.forEach(function(m){marques_vn[m]=0;marques_vd[m]=0;marques_vo[m]=0;});
+  ventes_c.forEach(function(v){
+    if(marques_vn[v.marque]!=null){
+      if(v.type==="VN"){marques_vn[v.marque]++;if(v.demo)marques_vd[v.marque]++;}
+      else marques_vo[v.marque]++;
+    }
+  });
+
+  var nb_reprises=ventes_c.filter(function(v){return v.reprise;}).length;
+  var pct_reprises=ventes_c.length?Math.round(nb_reprises/ventes_c.length*100):0;
+  var vn_stock=ventes_c.filter(function(v){return v.type==="VN"&&isNum(v.stock)&&v.stock>0;}).length;
+  var vn_stock_pct=total_vn?Math.round(vn_stock/total_vn*100):0;
+  var aujourdhui=ymd(nowC);
+  var ventes_jour=ventes_c.filter(function(v){return ymd(v.date)===aujourdhui;}).length;
+
+  var stats={};
+  Object.keys(types).forEach(function(n){stats[n]={vn:0,vd:0,vo:0,obj_fait:0,delais:[],jour:0,vofi:0,vnfi:0};});
+  ventes_c.forEach(function(v){
+    var nom=up(v.vendeur);
+    if(!stats[nom]){stats[nom]={vn:0,vd:0,vo:0,obj_fait:0,delais:[],jour:0,vofi:0,vnfi:0};types[nom]="VN";}
+    var s=stats[nom];
+    var est_vu=v.marque==="VW VU",vendeur_vu=types[nom]==="VU";
+    if(vendeur_vu&&!est_vu)return;
+    if(v.offre&&v.date)s.delais.push(Math.round((v.date-v.offre)/86400000));
+    if(ymd(v.date)===aujourdhui)s.jour++;
+    if(v.type==="VN"){
+      s.vn++;if(v.demo)s.vd++;if(v.finance)s.vnfi++;
+      if(vendeur_vu)s.obj_fait++;
+      else if(types[nom]==="VN"&&(!est_vu||vu_ok[nom]))s.obj_fait++;
+    }else{
+      s.vo++;if(v.finance)s.vofi++;
+      if(vendeur_vu||types[nom]==="VO")s.obj_fait++;
+    }
+  });
+
+  function cleTri(n){
+    var s=stats[n];var total=s.vn+s.vo,pct;
+    if(chefs[n])pct=total?1.0:0;else{var o=objectifDe(n);pct=o?s.obj_fait/o:0;}
+    return [-total,-pct,-(s.vnfi+s.vofi),n];
+  }
+  var noms=Object.keys(stats).filter(function(n){return !masques[n]||(stats[n].vn+stats[n].vo)>0;});
+  noms.sort(function(a,b){var ka=cleTri(a),kb=cleTri(b);
+    for(var i=0;i<4;i++){if(ka[i]<kb[i])return -1;if(ka[i]>kb[i])return 1;}return 0;});
+  var ordre=noms.slice();
+
+  var vofi_total=Object.keys(stats).filter(function(n){return !masques[n];}).reduce(function(a,n){return a+stats[n].vofi;},0);
+  var vofi_pct=total_vo?Math.round(vofi_total/total_vo*100):0;
+  var vnfi_total=Object.keys(stats).filter(function(n){return !masques[n];}).reduce(function(a,n){return a+stats[n].vnfi;},0);
+  var vnfi_pct=total_vn?Math.round(vnfi_total/total_vn*100):0;
+
+  return {
+    moisCle:moisCourant,aujourdhui:aujourdhui,a_fin:a_fin,
+    types:types,chefs:chefs,obj_perso:obj_perso,objectifDe:objectifDe,
+    stats:stats,ordre:ordre,ventes:ventes,ventes_c:ventes_c,
+    total_vn:total_vn,total_vd:total_vd,total_vo:total_vo,total_vo_marchand:total_vo_marchand,
+    marques_vn:marques_vn,marques_vd:marques_vd,marques_vo:marques_vo,
+    nb_reprises:nb_reprises,pct_reprises:pct_reprises,vn_stock:vn_stock,vn_stock_pct:vn_stock_pct,
+    ventes_jour:ventes_jour,vofi_pct:vofi_pct,vnfi_pct:vnfi_pct,MARQUES:MARQUES,
+    anon:!!opts.anon
+  };
+}
+root.AUDEXIA_CORE={compute:compute,marqueCourte:marqueCourte,MARQUES:MARQUES};
+})(typeof module!=="undefined"&&module.exports?module.exports:(this.window=this.window||this));
+if(typeof module!=="undefined"&&module.exports)module.exports=module.exports.AUDEXIA_CORE;
+
+
+/* Couche d'affichage de l'import (TV). Reconstruit le DOM à partir du résultat
+   de AUDEXIA_CORE.compute, en miroir exact du rendu Python. Dépend de : document,
+   XLSX (SheetJS), AUDEXIA_CORE, et des variables globales BC (couleurs), CFG, FIRSTM,
+   et des globales mutables DETAILS, DETAILS_MQ, VN, VO, JOUR + fonctions ajuster(),
+   tape(), __rebuildNav(). */
+(function(){
+"use strict";
+var MOIS_FR=["","JANVIER","FEVRIER","MARS","AVRIL","MAI","JUIN","JUILLET","AOUT","SEPTEMBRE","OCTOBRE","NOVEMBRE","DECEMBRE"];
+var MEDAL=["#f0b429","#c0c0c0","#cd7f32"];
+var TROPHEE='<svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h12v3a6 6 0 01-12 0V4zM4 5H2v2a4 4 0 004 4V9a2 2 0 01-2-2V5zm16 0h2v2a4 4 0 01-4 4V9a2 2 0 002-2V5zM9 14h6l1 3H8l1-3zM7 19h10v2H7z"/></svg>';
+var FLAMME='<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>';
+function E(s){return String(s==null?"":s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}
+function up(s){return String(s==null?"":s).toUpperCase();}
+function nomCourt(nom){
+  var parts=nom.split(/\s+/).filter(Boolean);
+  if(nom.length<=22||parts.length<2)return nom.toUpperCase();
+  return parts.slice(0,-1).map(function(p){return p[0]+".";}).join(" ")+" "+parts[parts.length-1].toUpperCase();
+}
+function prenomCourt(nom){
+  var p=nom.split(/\s+/).filter(Boolean);
+  return (p.length>1?(p[0][0]+"."):"")+p[p.length-1].toUpperCase();
+}
+function vehLabel(v){
+  var modele=v.modele;
+  if(v.marque_brute&&modele.indexOf(v.marque)!==0){
+    modele=v.marque+" "+modele.replace(/^VOLKSWAGEN( UTILITAIRES)? /,"");
+  }
+  return modele;
+}
+function fmtDateCivil(d){ // Date civil UTC -> "dd/mm"
+  if(!d)return "—";
+  return String(d.getUTCDate()).padStart(2,"0")+"/"+String(d.getUTCMonth()+1).padStart(2,"0");
+}
+function fmtPrix(p){
+  var n=Number(p);if(!isFinite(n)||!n)return "";
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g," ")+" €";
+}
+function ligneDetail(v){
+  var dtype=v.demo?"VD":(v.type==="VN"?"VN":"VO");
+  var rep=v.reprise_veh||(v.reprise?"Reprise":"");
+  if(rep&&v.prixrep){var pr=fmtPrix(v.prixrep);if(pr)rep=rep+" · "+pr;}
+  var st=v.stock,stock;
+  if(typeof st==="number"&&isFinite(st))stock=Math.round(st)+" j";
+  else stock=(st!=null&&st!=="")?(String(st).trim()+" j"):"—";
+  return {type:dtype,client:v.client||"—",veh:vehLabel(v),stock:stock,
+    etat:v.statut||"—",fin:v.typefin||(v.finance?"Financé":"Comptant"),
+    rep:rep||"—",cmd:fmtDateCivil(v.date)||"—"};
+}
+
+// Construit le payload d'affichage (HTML + données fiches) depuis le résultat compute.
+function build(d,cfg){
+  var A=!!d.anon; // mode public : les noms sont déjà anonymisés en amont
+  function dispNom(n){return A?n:nomCourt(n);}
+  function dispTick(n){return A?n:prenomCourt(n);}
+  var COULEURS={"VW":"#54BCEB","VW VU":"#2D7DD2","AUDI":"#F2545B","SKODA":"#78FAAE","CUPRA":"#C28E60","SEAT":"#EA5D1A"};
+  var MARQUES=d.MARQUES;
+  var types=d.types,chefs=d.chefs,stats=d.stats;
+  // ---- Lignes classement ----
+  var classementLen=d.ordre.length;
+  var maxTot=1;d.ordre.forEach(function(n){var t=stats[n].vn+stats[n].vo;if(t>maxTot)maxTot=t;});
+  var lignes="";var rang=0;
+  d.ordre.forEach(function(nom){
+    var s=stats[nom],tot=s.vn+s.vo;
+    if(tot===0&&chefs[nom])return;
+    rang++;var i=rang-1;
+    var wbar=Math.round(tot/maxTot*100);
+    var t=types[nom];
+    var col=t==="VU"?"#f0934a":t==="VN"?"#33e860":"#36c5f0";
+    var zero=tot===0,estChef=!!chefs[nom];
+    var obj,fait,objLabel;
+    if(estChef){obj=tot;fait=tot;objLabel=tot?"100%":"—";}
+    else{obj=d.objectifDe(nom);fait=s.obj_fait;objLabel=fait+"/"+obj;}
+    var dots="";
+    for(var k=0;k<obj;k++){
+      var on=k<fait;
+      var c=on?col:("rgba(255,255,255,"+(zero?0.25:0.45)+")");
+      dots+='<span style="color:'+c+'">'+(on?"●":"○")+'</span>';
+    }
+    var medal,nomcol;
+    if(i<3){medal='<span class="medal'+(i===0?" gold":"")+'" style="background:'+MEDAL[i]+'">'+(i+1)+'</span>';nomcol=MEDAL[i];}
+    else{medal='<span class="rang">'+String(i+1).padStart(2,"0")+'</span>';nomcol="#e8e4d0";}
+    var trophee="";
+    if(!estChef&&obj&&fait>=obj){trophee='<span class="'+(fait>obj?"trophy-or":"trophy-ok")+'">'+TROPHEE+'</span>';}
+    var enFeu=s.jour>0;
+    var flamme=enFeu?('<span class="feu">'+FLAMME+'</span>'):"";
+    // Import : pas de repère d'historique -> flèche stable
+    var arrow='<span class="stable">·</span>';
+    var cls=enFeu?"row feu-row":"row";
+    var styleZero=zero?' style="opacity:.55"':"";
+    var vofiCell=d.a_fin?('<div class="num vofi">'+((s.vnfi+s.vofi)||"·")+'</div>'):"";
+    lignes+='<div class="'+cls+' nav" data-k="v:'+E(nom)+'"'+styleZero+'>'
+      +'<div class="volbar" style="width:'+wbar+'%"></div>'
+      +'<div class="cm">'+medal+'</div><div class="cm">'+arrow+'</div>'
+      +'<div class="nom" style="color:'+nomcol+'">'+E(dispNom(nom))+flamme+trophee+'</div>'
+      +'<div class="num vn">'+((s.vn-s.vd)||"·")+'</div>'
+      +'<div class="num vd">'+(s.vd||"·")+'</div>'
+      +'<div class="num vo">'+(s.vo||"·")+'</div>'
+      +vofiCell
+      +'<div class="num tot">'+(tot||"·")+'</div>'
+      +'<div class="obj">'+objLabel+'</div>'
+      +'<div class="dots">'+dots+'</div></div>';
+  });
+  var displayed=rang;
+  for(var f=0;f<Math.max(0,classementLen-displayed);f++){
+    lignes+='<div class="row" style="visibility:hidden"><div class="nom">&nbsp;</div></div>';
+  }
+  // ---- Cartes marques ----
+  var objMarques=cfg.objectifs_marques||{};
+  var cases="";
+  MARQUES.forEach(function(mq){
+    var nvd=d.marques_vd[mq],nvntot=d.marques_vn[mq],nvo=d.marques_vo[mq];
+    var actif=(nvntot+nvo)>0;
+    var cc=actif?COULEURS[mq]:"#4a4738",bd=actif?COULEURS[mq]:"#2e2c20";
+    var obj=objMarques[mq]||0;
+    var w=obj?Math.min(100,Math.round(nvntot/obj*100)):0;
+    var reached=!!(obj&&nvntot>=obj);
+    var lead=reached?" lead":"";
+    var objlbl=obj?('<span class="bobj">/'+obj+'</span>'):"";
+    cases+='<div class="bcase nav'+lead+'" data-k="m:'+E(mq)+'" style="border-color:'+bd+'">'
+      +'<span class="blab" style="color:'+cc+'">'+E(mq)+'</span>'
+      +'<span class="bvnline"><span class="bvn" style="color:'+cc+'">'+nvntot+'</span>'+objlbl+'</span>'
+      +'<span class="bbar"><span class="bbarfill" data-w="'+w+'" style="background:'+cc+'"></span></span>'
+      +'<span class="bsub">VD '+nvd+' · VO '+nvo+'</span></div>';
+  });
+  // ---- Barre VO globale ----
+  var objVoG=(cfg.objectif_vo_global!=null?cfg.objectif_vo_global:50);
+  var voW=objVoG?Math.min(100,Math.round(d.total_vo/objVoG*100)):0;
+  var voReached=(objVoG&&d.total_vo>=objVoG)?" lead":"";
+  var vobar='<div class="voobj'+voReached+'" id="cVobar"><span class="voobj-lab">OBJ</span>'
+    +'<div class="voobj-bar"><div class="voobj-fill" data-w="'+voW+'" style="background:#36c5f0"></div></div>'
+    +'<span class="voobj-val">'+d.total_vo+'/'+objVoG+'</span></div>';
+  // ---- Fiches détaillées ----
+  var details={},detailsMq={};
+  d.ventes_c.slice().sort(function(a,b){return (b.date-a.date)||(a.id<b.id?-1:1);}).forEach(function(v){
+    var lg=ligneDetail(v);
+    var nomv=dispNom(v.vendeur);
+    var key=up(v.vendeur);
+    if(!details[key])details[key]={nom:nomv,lignes:[]};
+    details[key].lignes.push(lg);
+    var mk=(d.marques_vn[v.marque]!=null)?v.marque:"AUTRES";
+    var lm={};for(var kk in lg)lm[kk]=lg[kk];lm.vendeur=nomv;
+    if(!detailsMq[mk])detailsMq[mk]={nom:mk,lignes:[]};
+    detailsMq[mk].lignes.push(lm);
+  });
+  // ---- Tickers ----
+  var tapeVN=[],tapeVO=[],tapeJour=[];
+  var masques={};(cfg.masquer_classement||[]).forEach(function(n){masques[up(n)]=1;});
+  d.ventes.slice().sort(function(a,b){return b.date-a.date;}).forEach(function(v){
+    var court=dispTick(v.vendeur);
+    var modele=vehLabel(v);
+    var entree=[v.marque,E(modele)+" — "+E(court)+" "+fmtDateCivil(v.date)];
+    (v.type==="VN"?tapeVN:tapeVO).push(entree);
+  });
+  // tape du jour : ventes_c datées aujourd'hui (aujourdhui = d.aujourdhui civil)
+  d.ventes.slice().sort(function(a,b){return b.date-a.date;}).forEach(function(v){
+    var ymd=v.date.getUTCFullYear()+"-"+String(v.date.getUTCMonth()+1).padStart(2,"0")+"-"+String(v.date.getUTCDate()).padStart(2,"0");
+    if(ymd===d.aujourdhui&&!masques[up(v.vendeur)]){
+      tapeJour.push([v.marque,E(vehLabel(v))+" — "+E(dispTick(v.vendeur))]);
+    }
+  });
+  // ---- Cartes chiffres ----
+  var cards={
+    total:d.total_vn+d.total_vo, vnTotal:d.total_vn, vnNeuf:d.total_vn-d.total_vd, vd:d.total_vd,
+    vo:d.total_vo, voMarchand:d.total_vo_marchand, vofiPct:d.vofi_pct, vnfiPct:d.vnfi_pct,
+    ventesJour:d.ventes_jour, reprises:d.nb_reprises, reprisesPct:d.pct_reprises,
+    vnStock:d.vn_stock, vnStockPct:d.vn_stock_pct, aFin:d.a_fin
+  };
+  var mois=MOIS_FR[parseInt(d.moisCle.slice(5,7),10)]+" "+d.moisCle.slice(0,4);
+  return {lignes:lignes,cases:cases,vobar:vobar,details:details,detailsMq:detailsMq,
+          tapeVN:tapeVN,tapeVO:tapeVO,tapeJour:tapeJour,cards:cards,mois:mois};
+}
+
+if(typeof module!=="undefined"&&module.exports){module.exports={build:build,nomCourt:nomCourt};}
+else{window.AUDEXIA_RENDER={build:build};}
+})();
+
+var CFG={"objectifs": {"VN": 10, "VO": 12, "VU": 5}, "objectifs_marques": {"VW": 35, "AUDI": 20, "SKODA": 18, "SEAT": 5, "CUPRA": 6, "VW VU": 5}, "objectif_vo_global": 50, "objectifs_perso": {"R. POINOT": 8}, "vu_compte_pour": [], "reattributions": {"VSSZZZKS8VR012267": "H. IACOPINELLI", "WF0FXXWPMHMP04104": "B. MIKLAVCHICH", "WF0FXXWPMHMB27671": "B. MIKLAVCHICH"}, "masquer_classement": ["O. GASS", "M. DURSUN"], "compter_particuliers": ["M. DURSUN"], "exclusions": ["6278"], "exclusions_regles": [{"vendeur": "G. AUTHIER", "client_contient": "AUDEXIA"}], "chefs_des_ventes": ["U. RAGANEAU", "G. AUTHIER", "O. RAYNAUD", "H. IACOPINELLI", "S. GUIENOT", "M. DURSUN"], "vendeurs": {"S. GUIENOT": "VO", "H. DELESGUES": "VN", "U. RAGANEAU": "VN", "V. PERONNET": "VN", "G. NIODO": "VN", "S. DURSUN": "VN", "D. DURSUN": "VN", "Y. RUEDA": "VN", "A. BARREIROS": "VN", "C. CONTE": "VU", "O. GASS": "VO", "M. DURSUN": "VO", "R. FLEURIER": "VO", "O. RAYNAUD": "VN", "G. AUTHIER": "VN", "H. IACOPINELLI": "VN", "R. POINOT": "VO", "B. MIKLAVCHICH": "VO", "M. PINLET-COLETTI": "VO", "R. MIALARET": "VN"}};var FIRSTM={"f14cb4b1": "2026-02", "4af7008e": "2026-07", "91668fb7": "2026-08", "fcca3b2f": "2026-08", "3bc8c92e": "2026-08", "813686a8": "2026-05", "22d6af37": "2026-07", "de70e9d9": "2026-03", "d60a2515": "2026-04", "b1b2e1d5": "2026-06", "d7c1e1c8": "2026-07", "3e539672": "2026-07", "55dc6995": "2026-07", "63f2bc74": "2026-07", "fc1f9f38": "2026-04", "67670c1e": "2026-04", "2a7d1875": "2026-08", "9308d9a3": "2026-08", "e3b1b893": "2026-08", "1379a08d": "2026-08", "b666dc24": "2026-03", "a6c02d24": "2026-04", "8845e58a": "2026-05", "e695a5e8": "2026-06", "98628b4b": "2026-07", "09ae8358": "2026-08", "12d619c7": "2026-08", "a327c7c8": "2026-08", "1913393a": "2026-08", "308a7829": "2026-08", "9fb5e7ef": "2026-06", "f27a2342": "2026-07", "ba771ab6": "2026-07", "9be359e5": "2026-08", "88526449": "2026-08", "c20fb3ec": "2026-07", "e7cab124": "2026-08", "3211a0c0": "2026-08", "b5f3d657": "2026-08", "e99991be": "2026-08", "da8f508b": "2026-03", "6a6dd10e": "2026-06", "3d2e4bbb": "2026-06", "047774e1": "2026-06", "3506d501": "2026-07", "b34836b3": "2026-07", "5c1dcbdd": "2026-07", "2892c65b": "2026-08", "f94ea18b": "2026-08", "1142f078": "2026-08", "2f97f049": "2026-08", "48624612": "2026-08", "4cde5788": "2026-05", "3a11e13a": "2026-07", "f9ce4ec0": "2026-08", "a3781564": "2026-08", "1f306c36": "2026-01", "d09e8633": "2026-05", "9547c706": "2026-03", "97d2209e": "2026-04", "332b0a3c": "2026-07", "7292be18": "2026-07", "b8cdb767": "2026-07", "4bd8585c": "2026-07", "a02bb116": "2026-08", "7e9e4bac": "2026-08", "4f8019d8": "2026-08", "28187f9b": "2026-08", "e3ecb7ca": "2026-08", "0eeb34e3": "2026-05", "e533d0be": "2026-05", "58632c9f": "2026-05", "111db773": "2026-08", "3c15de9f": "2026-08", "2773f294": "2026-08", "82281988": "2026-08", "00354b05": "2026-08", "2d7decb5": "2026-08", "eea0d607": "2026-07", "ecc9ac35": "2026-07", "29429c73": "2026-07", "b0af0829": "2026-07", "0f47c175": "2026-08", "d191b679": "2026-01", "e5496cfc": "2026-03", "2daa0d49": "2026-03", "9278c779": "2026-07", "bcbd2d10": "2026-03", "e2a19def": "2026-07", "7b3e3c13": "2026-07", "29fa9f92": "2026-07", "a211cbfa": "2026-07", "baae8f74": "2026-07", "152a94ba": "2026-05", "05a5cb11": "2026-02", "fe413050": "2026-02", "6c9df406": "2026-02", "9af02e53": "2026-03", "b6dda7fc": "2026-07", "138193b6": "2026-07", "c69f1947": "2026-07", "52990a75": "2026-07", "76921c98": "2026-07", "a2da2de7": "2026-08", "aa1e5cab": "2026-08", "e8be7fe6": "2026-08", "8dac5994": "2026-08", "b9aed5c7": "2026-01", "54818f64": "2026-04", "dbc47bf2": "2026-06", "5a82882d": "2026-06", "c929233f": "2026-06", "d7fb27cf": "2026-07", "5286a243": "2026-07", "3eedf4d9": "2026-07", "d5016844": "2026-07", "e07b8465": "2026-07", "a33e1b93": "2026-07", "34267c1d": "2026-07", "9303a5df": "2026-02", "a47bed34": "2026-06", "bec74439": "2026-06", "7c8f027d": "2026-06", "d1d935b8": "2026-07", "dee79fc7": "2026-03", "e5dd6fa5": "2026-03", "2953363c": "2026-04", "f57f17ac": "2026-04", "4516eed7": "2026-06", "45270f55": "2026-06", "32fa99b4": "2026-06", "5832ef11": "2026-07", "f80b89b6": "2026-07", "81e2e3e7": "2026-03", "0602d86a": "2026-02", "13f4c421": "2026-02", "68c6d9e2": "2026-03", "2ae10ba9": "2026-04", "9d07c50c": "2026-04", "8edfd988": "2026-06", "612f3c64": "2026-07", "656e4089": "2026-07", "a88065c2": "2026-07", "e4fec468": "2026-07", "3e363ec8": "2026-07", "d142de52": "2026-07", "1621651f": "2026-08", "1cb9e6a7": "2026-07", "65eaa4c7": "2026-06", "9852e8f0": "2026-07", "98f71f90": "2026-02", "9c7a3804": "2026-04", "9c09a532": "2026-04", "cd387627": "2026-06", "f94ae947": "2026-08", "b87130ed": "2026-07", "39b654de": "2026-06", "a7ea309b": "2026-01", "819f1a70": "2026-07", "aab19834": "2026-07", "b09c4352": "2026-03", "eec554c2": "2026-05", "02c8ff88": "2026-06", "fbf3b301": "2026-02", "a3ea9dd6": "2026-02", "f4f3b09d": "2026-02", "aa875e32": "2026-02", "7b8cf872": "2026-02", "b93d7f1e": "2026-02", "f1d7c1d5": "2026-06", "f68c0174": "2026-04", "1a647aaa": "2026-06", "4377b338": "2026-06", "b706094f": "2026-06", "86d15777": "2026-06", "cf7774a1": "2026-06", "26402abe": "2026-06", "2a889bb2": "2026-06", "e263cb63": "2026-06", "88e7c1a9": "2026-02", "239ed5aa": "2026-02", "8364f9a7": "2026-04", "4ba6df67": "2026-05", "a04ce23e": "2026-06", "16bf327d": "2026-07", "44f8bfa2": "2026-06", "f6eeecb7": "2026-04", "02be7305": "2026-04", "0fdf1bca": "2026-04", "f219c894": "2026-05", "70e558ab": "2026-06", "14417ac9": "2026-06", "75042b5a": "2026-06", "b875e90d": "2026-06", "9a68c1e9": "2026-01", "612a9a33": "2026-05", "63597428": "2026-05", "9f5d2871": "2026-06", "bad55f70": "2026-06", "a9697efa": "2026-07", "c5b7a5a8": "2026-06", "9a3bc1d5": "2026-02", "db03b72e": "2026-06", "d4e1e7af": "2026-06", "9cb36fc9": "2026-06", "f673686a": "2026-06", "a637be07": "2026-06", "c4bd74db": "2026-06", "a448a978": "2026-01", "4af676b9": "2026-06", "620ff856": "2026-07", "0fa4b6c3": "2026-02", "ffca3605": "2026-06", "1a537b51": "2026-07", "afd2b5d7": "2026-07", "bc738b14": "2026-05", "94ca433a": "2026-06", "5122c5d9": "2026-06", "e5247053": "2026-06", "a88610f6": "2026-06", "3b3f03d8": "2026-03", "472133eb": "2026-05", "f3a0e7cf": "2026-06", "6729b47c": "2026-06", "8c93f4a3": "2026-02", "c3fa5371": "2026-05", "c46ffafd": "2026-01", "940c80e1": "2026-04", "3da0a081": "2026-01", "a88aae6c": "2026-01", "4920c7b0": "2026-01", "83931f30": "2026-02", "17f09e6b": "2026-05", "896bc8e1": "2026-05", "7b3dd4fb": "2026-05", "fd49ae66": "2026-05", "ace50b68": "2026-05", "82efaa16": "2026-04", "499f0b6f": "2026-05", "6a4d56a0": "2026-05", "bf1ea041": "2026-05", "dea35cd9": "2026-05", "4ab5f615": "2026-06", "a264fcc3": "2026-03", "25e62007": "2026-02", "81252ee7": "2026-01", "ecc8c402": "2026-02", "1fe11447": "2026-03", "91b5c01e": "2026-04", "bf02092d": "2026-04", "7c0a6c69": "2026-04", "1ac1443f": "2026-04", "0159b03e": "2026-06", "48410c4c": "2026-05", "9ef28fc4": "2026-06", "fecbabb7": "2026-05", "012a96cf": "2026-06", "a28cffbd": "2026-05", "de0d7cb5": "2026-05", "781f7005": "2026-05", "e8855d88": "2026-01", "be6d7a58": "2026-03", "0e569204": "2026-03", "8f825ffd": "2026-05", "e434f997": "2026-06", "3abed999": "2026-06", "32789713": "2026-01", "85cb3e4d": "2026-05", "d32fb4e2": "2026-05", "347e4f50": "2026-06", "d1e0ed22": "2026-06", "1116ea8e": "2026-06", "9ecac3fa": "2026-06", "61be74a9": "2026-06", "00441e29": "2026-02", "773c76e5": "2026-02", "cdd7e816": "2026-02", "ca09bbe5": "2026-03", "d144e192": "2026-04", "784f4365": "2026-05", "d427bb6c": "2026-05", "ef09e61e": "2026-05", "91643aa9": "2026-03", "efe54995": "2026-05", "cf3a6c49": "2026-04", "098c5dd9": "2026-05", "82277669": "2026-01", "98084a83": "2026-01", "f5a9a45f": "2026-02", "13a5d715": "2026-02", "77feeb46": "2026-02", "964016aa": "2026-03", "e3fe40c9": "2026-04", "8b2f7263": "2026-04", "dea734d1": "2026-05", "40b893ba": "2026-05", "b1795534": "2026-02", "4c63cf9b": "2026-02", "803a29aa": "2026-03", "2a018802": "2026-04", "7df99ba1": "2026-04", "73a2ba01": "2026-04", "e8b30383": "2026-03", "266a5f60": "2026-05", "0ceabee2": "2026-04", "4fda9fe4": "2026-04", "c4807128": "2026-04", "d55038cd": "2026-01", "b23331fe": "2026-01", "484c4e89": "2026-05", "b7e8ed9a": "2026-04", "08b398d5": "2026-05", "a33660fe": "2026-05", "c5d79225": "2026-04", "78facb46": "2026-01", "df481e0a": "2026-02", "7355c10a": "2026-02", "7b368d99": "2026-03", "bf12dedd": "2026-03", "35632e8e": "2026-03", "87355146": "2026-04", "0cf5d3b8": "2026-04", "c268b7e6": "2026-04", "d9c153ab": "2026-04", "3cc5808f": "2026-04", "349bb482": "2026-04", "59cd46d8": "2026-04", "967e19d8": "2026-04", "7b9069db": "2026-04", "e4367e7d": "2026-03", "a4ffc117": "2026-05", "e3f245bb": "2026-04", "29bab22a": "2026-03", "347a8334": "2026-04", "c0d2b64d": "2026-02", "30935069": "2026-02", "2226e6af": "2026-03", "73e75ee4": "2026-01", "432f1f12": "2026-01", "472fdb50": "2026-01", "a68bb53c": "2026-01", "aa2473cb": "2026-01", "b2a25f6c": "2026-03", "6d1667c8": "2026-03", "2b7038cd": "2026-03", "31cea7b7": "2026-03", "f4b942a7": "2026-03", "83498270": "2026-03", "437fd80c": "2026-03", "2ef360c3": "2026-03", "725881a4": "2026-04", "965d8bbb": "2026-04", "14ef5c8e": "2026-04", "4c4594fe": "2026-03", "68522333": "2026-03", "8d40c532": "2026-03", "08f5454c": "2026-04", "231860d8": "2026-04", "4d817d1b": "2026-02", "699946ed": "2026-03", "03c56113": "2026-03", "e02c727f": "2026-03", "e29cb616": "2026-03", "c5c732e0": "2026-03", "6fd2815a": "2026-03", "2bd799a1": "2026-03", "a10b221e": "2026-03", "9c996559": "2026-03", "0fe0fd36": "2026-04", "ea33b0e9": "2026-04", "ebdf3719": "2026-04", "f11dead9": "2026-03", "91d69d5f": "2026-04", "8ef9c03f": "2026-01", "4b1c37b1": "2026-02", "ed29102c": "2026-02", "f98998c4": "2026-03", "83cc6a2b": "2026-03", "e6f65ff5": "2026-03", "fd005997": "2026-02", "785a0d60": "2026-03", "9cc20568": "2026-03", "faa723a3": "2026-03", "15a27e24": "2026-03", "839dc5e9": "2026-03", "c5fafcad": "2026-01", "41408fd2": "2026-02", "f398b13c": "2026-03", "704c2668": "2026-03", "540d3d5d": "2026-03", "59fbca7d": "2026-03", "8b1b1560": "2026-03", "8e7ed462": "2026-03", "40953165": "2026-03", "1931f1e9": "2026-02", "31a77015": "2026-02", "27262b4e": "2026-02", "95583c6d": "2026-02", "d1c11d3d": "2026-01", "9d7e593c": "2026-01", "3a4a6b1c": "2026-02", "10cf33d7": "2026-01", "f1f143c0": "2026-01", "9a99ae6c": "2026-02", "7d64771e": "2026-03", "afe98d73": "2026-03", "1c48dd74": "2026-03", "b9bc3e6a": "2026-01", "e53c85cd": "2026-02", "eee16b8a": "2026-03", "dd3a946e": "2026-03", "3a844fb7": "2026-03", "edf5d406": "2026-03", "f48cd540": "2026-03", "a7df340f": "2026-03", "92e8e0e8": "2026-03", "cbc28509": "2026-03", "4c7830d3": "2026-01", "66aa2306": "2026-02", "80852b9c": "2026-02", "70ffa5d4": "2026-02", "077a806c": "2026-02", "70a5a52c": "2026-02", "18d54f38": "2026-03", "c70cc60b": "2026-03", "effa5bed": "2026-03", "ddc98431": "2026-03", "08330426": "2026-01", "f522821a": "2026-01", "fe0ca83f": "2026-02", "01f7b70d": "2026-02", "5f9c0fc3": "2026-03", "ce1c2fdd": "2026-02", "53df730a": "2026-02", "0f919769": "2026-02", "029fdfc1": "2026-02", "acea7ce0": "2026-01", "c55c53fa": "2026-01", "be43276b": "2026-02", "cf33dbc5": "2026-03", "a8c8900d": "2026-01", "904ca229": "2026-02", "87fd6498": "2026-02", "ce054cd7": "2026-03", "bf734c9e": "2026-03", "64449ecb": "2026-01", "60ecb9d5": "2026-01", "82882a52": "2026-02", "4e9ebf97": "2026-02", "9ea40426": "2026-02", "f9cba7ad": "2026-02", "1b3b27de": "2026-03", "e06f6963": "2026-03", "67c3dcac": "2026-02", "f2627662": "2026-02", "119ee863": "2026-02", "9f44a8ab": "2026-01", "0b425f91": "2026-01", "d66f4b68": "2026-01", "ce8ef9b1": "2026-02", "3cbdd11f": "2026-01", "fe816885": "2026-01", "cdcce369": "2026-01", "6b6b5cd5": "2026-01", "983c809f": "2026-01", "d68cf7b4": "2026-02", "96cdb21c": "2026-01", "b6a127f4": "2026-01", "e0eb5b77": "2026-01", "fd1e63ba": "2026-01", "9cfd2c70": "2026-01", "450c9d54": "2026-02", "a14843b2": "2026-01", "6e34b08a": "2026-01", "ede080c5": "2026-01", "d0adde3a": "2026-01", "e76eac99": "2026-02", "ac8f092e": "2026-01", "5a42b16b": "2026-01", "c3878f0d": "2026-01", "c32970e7": "2026-01", "1469daf1": "2026-01", "2ba86055": "2026-01", "20a5062f": "2026-01", "4048df24": "2026-09", "bfc4093a": "2026-09", "12a9f75c": "2026-09", "beb81585": "2026-09", "5e4b0f7d": "2026-09", "0e090d43": "2026-09", "239d4e90": "2026-09", "41519fb7": "2026-09", "d6dc44d4": "2026-09", "56febcc0": "2026-09", "1e4be729": "2026-09", "bbf6cc35": "2026-09", "885f4280": "2026-09", "0fd8a1ed": "2026-09", "fd73edc5": "2026-09", "601d33c4": "2026-09", "21b4df10": "2026-09", "489cd520": "2026-09", "1b4612fd": "2026-09", "bc7be64d": "2026-09", "3418ad6d": "2026-09", "9ae2b16a": "2026-09", "919be6c4": "2026-09", "08e6c507": "2026-09", "62015088": "2026-09", "9f4e6590": "2026-09", "9951d81c": "2026-09", "84eb5607": "2026-09", "7ed4dcfd": "2026-09", "aa275936": "2026-09", "d6a234fa": "2026-09", "65ed6305": "2026-09", "88fc2628": "2026-09", "9f8494a9": "2026-09", "9b456e2f": "2026-09", "2437c6d5": "2026-09", "50e43af7": "2026-09", "be66f43b": "2026-09", "0680777c": "2026-09", "f0d0f148": "2026-09", "389156bc": "2026-09", "2f3f5336": "2026-09", "7760025b": "2026-09", "67483bc9": "2026-09", "c3494e2a": "2026-09", "45116030": "2026-09", "6feec8fb": "2026-09", "c2dc2ede": "2026-09", "4269a98d": "2026-09", "cfab9309": "2026-09", "b907b216": "2026-09", "13335a19": "2026-09", "33ecaceb": "2026-09", "464d06cb": "2026-09", "b4c30711": "2026-09", "2bd70beb": "2026-09", "4b04da2d": "2026-09", "f24deb6a": "2026-09", "a14455aa": "2026-09", "587daa06": "2026-09", "6c549b1a": "2026-09", "884ec2b4": "2026-09", "d252e924": "2026-09", "ae6e1bc9": "2026-09", "c0895d10": "2026-09", "8724a080": "2026-09", "ba6bc325": "2026-09", "bcf4fec9": "2026-09", "5d72001d": "2026-09", "0d6b08e2": "2026-09", "d25d61b8": "2026-09", "59022cbd": "2026-09", "5f00eb04": "2026-09", "ed6b283a": "2026-09", "b937fb50": "2026-09", "5b8cf42e": "2026-09", "4249abee": "2026-09", "a97097f3": "2026-09", "2a2c7d17": "2026-09", "1019d4b0": "2026-09", "31b8d011": "2026-09", "0281bed0": "2026-09", "af02f846": "2026-09", "a95c4ba3": "2026-09", "d7cb5eab": "2026-09", "18dc6641": "2026-09", "8903983a": "2026-09", "a9582091": "2026-09", "c73a26b7": "2026-09", "9046957d": "2026-09", "d805c77e": "2026-09", "61a8e51c": "2026-09", "a9348086": "2026-09", "bd9440df": "2026-09", "f6f37957": "2026-09", "a2ad253f": "2026-09", "aed31a8f": "2026-09", "f7b1e8a2": "2026-09", "0589c65e": "2026-10", "5fc5db41": "2026-10", "12d0ec74": "2026-10", "b964a1dc": "2026-10", "5af1c861": "2026-10", "8385041a": "2026-10", "d8c83882": "2026-10", "feed81a7": "2026-10", "91479b24": "2026-10", "34c545b3": "2026-10", "2fe021fd": "2026-10", "5ae7bb01": "2026-10", "a9713f15": "2026-10", "58a2696e": "2026-10", "79992c66": "2026-10", "ad78fdea": "2026-10", "26bce05a": "2026-10", "ed1dc405": "2026-10", "f6f9fb77": "2026-10", "2c1d793e": "2026-10", "79bb07b2": "2026-10", "e98f28d0": "2026-10", "3c36d3b3": "2026-10", "3ad3faf3": "2026-10"};var ANON=true;
+/* Câblage du bouton d'import (TV uniquement). Dépend de : CFG, FIRSTM (injectés),
+   AUDEXIA_CORE, AUDEXIA_RENDER, XLSX, et des globales du script principal
+   (DETAILS, DETAILS_MQ, VN, VO, JOUR, tape(), ajuster(), window.__rebuildNav). */
+(function(){
+"use strict";
+function _toast(msg,ok){
+  var t=document.getElementById('imptoast');
+  if(!t){t=document.createElement('div');t.id='imptoast';document.body.appendChild(t);}
+  t.textContent=msg;t.className=ok?'on':'on err';
+  clearTimeout(t._h);t._h=setTimeout(function(){t.className='';},5000);
+}
+function _theadHTML(aFin){
+  return '<div>#</div><div></div><div>VENDEUR</div>'
+    +'<div style="text-align:right">VN</div><div style="text-align:right">VD</div><div style="text-align:right">VO</div>'
+    +(aFin?'<div style="text-align:right">FI</div>':'')
+    +'<div style="text-align:right">TOTAL</div><div style="text-align:right">OBJ</div><div>PROGRESSION</div>';
+}
+function _pad2(n){return String(n).padStart(2,'0');}
+function _applyData(d){
+  var P=AUDEXIA_RENDER.build(d,CFG),c=P.cards;
+  document.getElementById('thead').innerHTML=_theadHTML(c.aFin);
+  document.body.classList.toggle('has-vofi',!!c.aFin);
+  document.getElementById('board').innerHTML=P.lignes;
+  var brands=document.querySelector('.brands');if(brands)brands.innerHTML=P.cases;
+  var vob=document.getElementById('cVobar');if(vob)vob.outerHTML=P.vobar;
+  document.getElementById('cTotline').innerHTML='<span class="val doto" style="color:#f0b429">'+c.total+'</span>'
+    +(c.ventesJour?'<span class="jourbadge">+'+c.ventesJour+' ▲ auj.</span>':'');
+  document.getElementById('cVnNeuf').textContent=c.vnNeuf;
+  document.getElementById('cVd').textContent=c.vd;
+  document.getElementById('cVo').textContent=c.vo;
+  document.getElementById('cVoMarchand').textContent=c.voMarchand;
+  var vnfi=document.getElementById('cVnfiVal');if(vnfi&&c.aFin)vnfi.textContent=c.vnfiPct+'%';
+  var vofi=document.getElementById('cVofiVal');if(vofi&&c.aFin)vofi.textContent=c.vofiPct+'%';
+  document.getElementById('repline').innerHTML='VN sur stock : <span class="reprv">'+c.vnStock+'</span>/'+c.vnTotal
+    +' ('+c.vnStockPct+'%) &nbsp;·&nbsp; commandes avec reprise : <span class="reprv">'+c.reprises+'</span> ('+c.reprisesPct+'%)';
+  document.getElementById('hmois').textContent=P.mois;
+  var now=new Date();
+  document.getElementById('hmaj').textContent='importé '+_pad2(now.getHours())+':'+_pad2(now.getMinutes());
+  // Tickers (globales mutables du script principal)
+  VN=P.tapeVN;VO=P.tapeVO;JOUR=P.tapeJour;
+  tape('tapeVN',VN);tape('tapeVO',VO);
+  if(document.getElementById('tapeJour'))tape('tapeJour',JOUR);
+  // Fiches (globales mutables)
+  DETAILS=P.details;DETAILS_MQ=P.detailsMq;
+  // Barres d'avancement
+  requestAnimationFrame(function(){
+    document.querySelectorAll('.bbarfill,.voobj-fill').forEach(function(el){el.style.width=el.dataset.w+'%';});
+  });
+  if(window.__rebuildNav)window.__rebuildNav();
+  if(typeof ajuster==='function')ajuster();
+  window.__imported=true; // fige l'auto-rechargement
+}
+function _init(){
+  var btn=document.getElementById('impbtn'),inp=document.getElementById('impfile');
+  if(!btn||!inp)return;
+  btn.addEventListener('click',function(ev){ev.stopPropagation();inp.value='';inp.click();});
+  inp.addEventListener('change',function(){
+    var f=inp.files&&inp.files[0];if(!f)return;
+    if(typeof XLSX==='undefined'){_toast('Lecteur Excel non chargé (connexion Internet ?)',false);return;}
+    _toast('Lecture de '+f.name+'…',true);
+    var rd=new FileReader();
+    rd.onload=function(){
+      try{
+        var wb=XLSX.read(new Uint8Array(rd.result),{type:'array',cellDates:false});
+        var ws=wb.Sheets[wb.SheetNames[0]];
+        var aoa=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});
+        var d=AUDEXIA_CORE.compute(aoa,CFG,new Date(),{firstMSeed:FIRSTM,anon:(typeof ANON!=='undefined'&&ANON)});
+        if(!d.ordre||!d.ordre.length){_toast('Aucune vente exploitable dans ce fichier',false);return;}
+        _applyData(d);
+        _toast('Importé : '+(d.total_vn+d.total_vo)+' commandes',true);
+      }catch(e){_toast('Erreur de lecture : '+(e&&e.message?e.message:e),false);}
+    };
+    rd.onerror=function(){_toast('Impossible de lire le fichier',false);};
+    rd.readAsArrayBuffer(f);
+  });
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_init);
+else _init();
+})();
+
 </script></body></html>
