@@ -210,8 +210,9 @@ body.has-vofi .thead,body.has-vofi .row{grid-template-columns:4.4vw 2.4vw minmax
 #reporting .rbody{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;justify-content:flex-start;margin-top:.4vw;scrollbar-width:thin;scrollbar-color:#36c5f0 #1a1710}
 #reporting .rbody::-webkit-scrollbar{width:.7vw}#reporting .rbody::-webkit-scrollbar-thumb{background:#36c5f0}
 .rr{display:grid;gap:.3vw;align-items:center;font-size:1.3vw;padding:.03em 0}
-.rr.rhead{color:#8a8568;font-size:1vw;letter-spacing:.08vw;border-bottom:1px solid #2e2c20;padding-bottom:.3vw;margin-bottom:.2vw}
-.rr.rrb{border-bottom:1px solid #22201a;padding-bottom:.18vw;margin-bottom:.22vw}
+.rr.rhead{color:#8a8568;font-size:1vw;letter-spacing:.08vw;border-bottom:1px solid #2e2c20;padding-bottom:.3vw;margin-bottom:.25vw}
+.rgrp{border:1px solid #2e2c20;border-left-width:.42vw;border-radius:.3vw;margin-bottom:.4vw;padding:.14vw .3vw .1vw}
+.rr.rrb{padding-bottom:.1vw}
 .rbrand{color:#e8e4d0;letter-spacing:.08vw;white-space:nowrap}
 .rr.rhead .rbrand{color:#8a8568}
 .ryr{font-family:'Doto',monospace;font-weight:900;font-size:.78em;text-align:center}
@@ -399,6 +400,7 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(ajuster);
     var R=REPORTING||{};
     var MO=['JANV','FÉVR','MARS','AVR','MAI','JUIN','JUIL','AOÛT','SEPT','OCT','NOV','DÉC'];
     var gtc='6vw 3.4vw repeat(12,1fr) 4.6vw';
+    var RBC={VW:BC['VW'],VU:BC['VW VU'],AUDI:BC['AUDI'],SKODA:BC['SKODA'],CUPRA:BC['CUPRA'],SEAT:BC['SEAT'],VO:'#36c5f0'};
     function sum(a){var s=0;for(var i=0;i<a.length;i++)if(typeof a[i]==='number')s+=a[i];return s;}
     var head='<div class="rr rhead" style="grid-template-columns:'+gtc+'"><span class="rbrand">MARQUE</span><span class="ryr"></span>'
       +MO.map(function(m){return '<span class="rmh">'+m+'</span>';}).join('')+'<span class="rtot">TOT</span></div>';
@@ -412,10 +414,12 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(ajuster);
       }).join('');
       var t1=sum(n1),t2=sum(nn);
       var ttcls='rtot rtot-n'+((t1&&t2)?(t2>=t1?' up':' down'):'');
-      return '<div class="rr" style="grid-template-columns:'+gtc+'"><span class="rbrand">'+E(b.nom)+'</span>'
+      var col=RBC[b.nom]||'#8a8568';
+      return '<div class="rgrp" style="border-color:'+col+';background:'+col+'14">'
+          +'<div class="rr" style="grid-template-columns:'+gtc+'"><span class="rbrand" style="color:'+col+'">'+E(b.nom)+'</span>'
           +'<span class="ryr y1">'+E(String(R.n1))+'</span>'+c1+'<span class="rtot">'+(t1||'·')+'</span></div>'
           +'<div class="rr rrb" style="grid-template-columns:'+gtc+'"><span class="rbrand"></span>'
-          +'<span class="ryr y2">'+E(String(R.n))+'</span>'+c2+'<span class="'+ttcls+'">'+(t2||'·')+'</span></div>';
+          +'<span class="ryr y2">'+E(String(R.n))+'</span>'+c2+'<span class="'+ttcls+'">'+(t2||'·')+'</span></div></div>';
     }).join('');
     reporting.innerHTML='<div class="dh"><span class="who">REPORTING COMMANDES — '+E(String(R.n1))+' vs '+E(String(R.n))+'</span>'
       +'<span class="dsum">N-1 (ligne haute) vs '+E(String(R.n))+' (ligne basse, mois en cours en direct) · vert = ≥ N-1</span></div>'
