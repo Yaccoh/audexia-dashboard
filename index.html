@@ -413,7 +413,10 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(ajuster);
         return '<span class="'+cls+'">'+(typeof v==='number'?(v||'·'):'·')+'</span>';
       }).join('');
       var t1=sum(n1),t2=sum(nn);
-      var ttcls='rtot rtot-n'+((t1&&t2)?(t2>=t1?' up':' down'):'');
+      var mi=R.mois_courant||12;
+      function sumTo(a,k){var s=0;for(var i=0;i<k&&i<a.length;i++)if(typeof a[i]==='number')s+=a[i];return s;}
+      var y1=sumTo(n1,mi),y2=sumTo(nn,mi);   // compare 2026 à-date vs 2025 MÊME période
+      var ttcls='rtot rtot-n'+((y1&&y2)?(y2>=y1?' up':' down'):'');
       var col=RBC[b.nom]||'#8a8568';
       return '<div class="rgrp" style="border-color:'+col+';background:'+col+'14">'
           +'<div class="rr" style="grid-template-columns:'+gtc+'"><span class="rbrand" style="color:'+col+'">'+E(b.nom)+'</span>'
