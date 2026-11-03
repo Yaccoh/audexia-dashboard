@@ -263,7 +263,13 @@ body.admin .admin-only{display:inline}
 #challenge .chhd{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #2e3b24;padding-bottom:.3vw}
 #challenge .chtit{color:#e8ffe0;font-size:1.5vw;letter-spacing:.1vw}
 #challenge .chprix{color:#f0b429;font-family:'Doto',monospace;font-weight:900;font-size:1.5vw;text-shadow:0 0 .4vw rgba(240,180,41,.5)}
-#challenge .chdesc{color:#7f9a74;font-size:1.05vw;margin:.25vw 0 .4vw}
+#challenge .chcard{cursor:pointer;transition:border-color .3s,box-shadow .3s}
+/* Règle repliée par défaut ; dépliée uniquement sur la carte "active" (une seule à la fois) */
+#challenge .chdesc{color:#9fe08c;font-size:1.1vw;max-height:0;opacity:0;overflow:hidden;margin:0;transition:max-height .4s ease,opacity .4s ease,margin .4s ease}
+#challenge .chcard.rule-on{border-color:#33e860;box-shadow:0 0 1vw -.2vw rgba(51,232,96,.55)}
+#challenge .chcard.rule-on .chdesc{max-height:6vw;opacity:1;margin:.3vw 0 .45vw}
+#challenge .chrule-tag{float:right;color:#33e860;font-size:.9vw;letter-spacing:.1vw;opacity:0;transition:opacity .3s}
+#challenge .chcard.rule-on .chrule-tag{opacity:1}
 #challenge .chlist{display:flex;flex-direction:column;gap:.08vw}
 #challenge .chrow{display:grid;grid-template-columns:2.4vw minmax(0,1fr) 3vw 3.4vw;gap:.5vw;align-items:center;font-size:1.3vw;padding:.08em 0;border-bottom:1px solid #26301d}
 #challenge .chhead{color:#8a8568;font-size:.95vw;letter-spacing:.1vw;border-bottom:1px solid #2e3b24}
@@ -500,14 +506,25 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(ajuster);
       var prix=ch.prix?('<span class="chprix">'+ch.prix+' €</span>'):'';
       return '<div class="chcard">'
         +'<div class="chhd"><span class="chtit">'+E(ch.titre)+'</span>'+prix+'</div>'
-        +'<div class="chdesc">'+E(ch.desc||'')+'</div>'
+        +'<div class="chdesc"><span class="chrule-tag">RÈGLE</span>'+E(ch.desc||'')+'</div>'
         +'<div class="chlist"><div class="chrow chhead"><span class="chrk">#</span><span class="chven">VENDEUR</span><span class="chn">NB</span><span class="chpts">PTS</span></div>'+rows+'</div></div>';
     }).join('');
     challenge.innerHTML='<div class="dh"><span class="who">🏁 CHALLENGES'+(perlbl?' — '+perlbl:'')+'</span>'
-      +'<span class="dsum">Classement par prise de commande · ↑↓ défiler · Échap : retour</span></div>'
+      +'<span class="dsum">Classement par prise de commande · les règles défilent une à une · clic : afficher une règle · Échap : retour</span></div>'
       +'<div class="chgrid">'+cards+'</div>';
     challenge.classList.add('on');
+    // Une seule règle visible à la fois : rotation auto d'une carte à l'autre (clic = épingle).
+    if(challenge._rot){clearInterval(challenge._rot);challenge._rot=null;}
+    var ccards=Array.prototype.slice.call(challenge.querySelectorAll('.chcard'));
+    if(ccards.length){
+      var ri=0;
+      var showRule=function(k){ri=k;ccards.forEach(function(c,j){c.classList.toggle('rule-on',j===k);});};
+      showRule(0);
+      ccards.forEach(function(c,j){c.addEventListener('click',function(){showRule(j);});});
+      challenge._rot=setInterval(function(){showRule((ri+1)%ccards.length);},6000);
+    }
   }
+  function closeChallenge(){if(challenge._rot){clearInterval(challenge._rot);challenge._rot=null;}challenge.classList.remove('on');}
   function openFiche(k){
     if(k==='annuel:'){openAnnuel();return;}
     var p=k.indexOf(':'),kind=k.slice(0,p),key=k.slice(p+1);
@@ -585,7 +602,7 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(ajuster);
       return;
     }
     if(challenge&&challenge.classList.contains('on')){
-      if(e.key==='Escape'||e.key==='Backspace'||e.key==='Enter'){challenge.classList.remove('on');e.preventDefault();}
+      if(e.key==='Escape'||e.key==='Backspace'||e.key==='Enter'){closeChallenge();e.preventDefault();}
       else{scrollPop(challenge.querySelector('.chgrid'),e);}
       return;
     }
